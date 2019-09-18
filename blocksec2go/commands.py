@@ -4,6 +4,10 @@ logger = logging.getLogger(__name__)
 from smartcard.System import readers
 from blocksec2go.comm.pyscard import open_pyscard
 
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import utils
+from cryptography.hazmat.primitives import hashes
+
 def find_reader(reader_name):
     """ Looks for a specific card reader
 
@@ -142,6 +146,30 @@ def get_key_info(reader, key_id):
     logger.debug('global count %d, count %d, public key %s', global_counter, counter, key.hex())
     return (global_counter, counter, key)
 
+def is_key_valid(reader, key_id):
+    """ Validate retrieved keypair information
+
+    Args:
+        reader (:obj:): object providing reader communication
+        key_id (int): key ID as returned by ``generate_keypair``
+    
+    Returns:
+        key_valid:
+            bool: True if key is valid, else false
+    
+    Raises:
+        RuntimeError: Entered key_id is outside of keypair scope.
+        
+        Any exceptions thrown by the reader wrapper are passed through.
+    """
+    logger.debug('IS KEY VALID key %d', key_id)
+    if key_id < 0 or key_id > 255:
+        raise RuntimeError('Invalid key_id: ' + str(key_id))
+    global_counter, counter, key = get_key_info(reader, key_id)
+    if(0 == global_counter): return False
+    elif(0 == counter): return False
+    else: return True
+
 def generate_signature(reader, key_id, hash):
     """ Send command to calculate signature
 
@@ -194,6 +222,31 @@ def generate_signature(reader, key_id, hash):
     signature = r.resp[8:]
     logger.debug('global count %d, count %d, signature %s', global_counter, counter, signature.hex())
     return (global_counter, counter, signature)
+
+def verify_signature(key, hash, signature):
+    """ Verification command to check signature
+
+    Verifies a signature which is returned by ``generate_signature``
+    using a public key and the hashed message. The returned value
+    is a True boolean if the signature is verified correctly, but
+    returns a InvalidSignature exception if incorrect.
+
+    Args:
+        key (bytes): `SEC1`_ encoded uncompressed public key
+        hash (bytes): 32 byte long hash which was signed
+        signature (bytes): DER encoded signature
+    
+    Returns:   
+        verification:
+            boolean: True if signature gets verified correctly
+    
+    Raises:
+        Any exceptions thrown by the cryptography wrapper are passed through.
+    """
+    logger.debug('VERIFY SIGNATURE public key %s, hash %s, signature %s', key.hex(), hash.hex(), signature.hex())
+
+    public_key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256K1(), key)
+    return public_key.verify(signature, hash, ec.ECDSA(utils.Prehashed(hashes.SHA256()))) == None
 
 def encrypted_keyimport(reader, seed):
     """ Sends command to derive key from given seed
